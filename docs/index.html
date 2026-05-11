@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Form Autofill — bulk-submit any public Google Form</title>
+<meta name="description" content="A minimal Python + PyQt6 tool that inspects, customizes, and bulk-submits Google Forms with validation-aware random data.">
+<script>
+// Apply theme before paint to avoid a flash.
+(function() {
+  try {
+    var saved = localStorage.getItem('theme');
+    var theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+})();
+</script>
+<style>
+html[data-theme="light"] {
+  --bg:        #fafafa;
+  --surface:   #ffffff;
+  --surface2:  #f4f4f4;
+  --border:    #e2e2e2;
+  --border-hi: #cfcfcf;
+  --text:      #171717;
+  --text-dim:  #737373;
+  --text-dim2: #a3a3a3;
+}
+html[data-theme="dark"] {
+  --bg:        #0d0d0d;
+  --surface:   #161616;
+  --surface2:  #1f1f1f;
+  --border:    #2a2a2a;
+  --border-hi: #3a3a3a;
+  --text:      #e8e8e8;
+  --text-dim:  #888888;
+  --text-dim2: #5a5a5a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: -apple-system, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 28px 96px;
+}
+
+header.site {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+/* mobile/default: block flow — items appear in DOM order:
+   header, tagline, hero (image), content (sections) */
+.layout { display: block; }
+.content-col > section:first-child { margin-top: 56px; }
+
+/* desktop: split screen. Body owns no scroll; the left column has its own
+   internal scroll. The right column stays planted — no movement at all. */
+@media (min-width: 960px) {
+  html, body { height: 100%; overflow: hidden; }
+  main {
+    max-width: 1200px;
+    height: 100vh;
+    margin: 0 auto;
+    padding: 40px 28px 0;
+    box-sizing: border-box;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    grid-template-areas:
+      "header  hero"
+      "tagline hero"
+      "content hero";
+    column-gap: 56px;
+    height: 100%;
+  }
+  header.site { grid-area: header; margin-bottom: 12px; }
+  .tagline    { grid-area: tagline; margin-bottom: 24px; max-width: none; }
+  .content-col {
+    grid-area: content;
+    min-width: 0;
+    overflow-y: auto;
+    padding-right: 8px;        /* room for the scrollbar without crowding text */
+    padding-bottom: 40px;
+  }
+  .content-col > section:first-child { margin-top: 0; }
+  .hero-col {
+    grid-area: hero;
+    align-self: stretch;
+    height: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-bottom: 40px;
+    overflow: hidden;
+  }
+  .hero-col .screenshot {
+    display: flex;
+    align-items: flex-start;
+    max-height: 100%;
+  }
+  .hero-col .screenshot img {
+    max-height: calc(100vh - 80px);
+    max-width: 100%;
+    width: auto;
+    height: auto;
+  }
+  /* slim, monochrome scrollbar for the content column */
+  .content-col::-webkit-scrollbar { width: 8px; }
+  .content-col::-webkit-scrollbar-thumb {
+    background: var(--border-hi);
+    border-radius: 4px;
+  }
+  .content-col::-webkit-scrollbar-track { background: transparent; }
+  .content-col { scrollbar-width: thin; scrollbar-color: var(--border-hi) transparent; }
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.tagline {
+  color: var(--text-dim);
+  font-size: 15px;
+  margin-bottom: 40px;
+  max-width: 56ch;
+}
+
+.eyebrow {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+section { margin-top: 56px; }
+
+h2 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin-bottom: 18px;
+}
+
+p { color: var(--text); }
+p + p { margin-top: 10px; }
+.muted { color: var(--text-dim); }
+
+.theme-toggle {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-hi);
+}
+
+.screenshot {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.screenshot img {
+  display: none;
+  width: 100%;
+  height: auto;
+}
+html[data-theme="light"] .screenshot .hero-light { display: block; }
+html[data-theme="dark"]  .screenshot .hero-dark  { display: block; }
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.feature {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 18px 16px;
+}
+.feature h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.feature p {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  margin: 0;
+}
+
+.code-block { margin-bottom: 14px; }
+.code-block:last-of-type { margin-bottom: 0; }
+.code-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.code-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.copy-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.copy-btn:hover { color: var(--text); border-color: var(--border-hi); }
+.copy-btn.copied { color: var(--text); border-color: var(--text-dim); }
+code { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+p code, li code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.88em;
+}
+
+ol, ul { padding-left: 22px; }
+ol li, ul li { margin-bottom: 6px; color: var(--text); }
+
+footer {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim2);
+  font-size: 12px;
+}
+
+@media (max-width: 540px) {
+  main { padding: 32px 18px 60px; }
+  h1 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="layout">
+    <header class="site">
+      <h1>Form Autofill</h1>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme">Light</button>
+    </header>
+
+    <p class="tagline">
+      A minimal Python + PyQt6 desktop tool that inspects, customizes, and
+      bulk-submits any public Google Form &mdash; with validation-aware random data.
+    </p>
+
+    <div class="hero-col">
+      <div class="screenshot">
+        <img class="hero-light" alt="Form Autofill GUI in light mode" src="docs/gui-light.png">
+        <img class="hero-dark"  alt="Form Autofill GUI in dark mode"  src="docs/gui-dark.png">
+      </div>
+    </div>
+
+    <div class="content-col">
+  <section>
+    <div class="eyebrow">Features</div>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3>Inspect &amp; pick fields</h3>
+        <p>Parses every field on the form &mdash; type, required-ness, options, validation &mdash; and lets you tick which ones to fill.</p>
+      </div>
+      <div class="feature">
+        <h3>Per-field value overrides</h3>
+        <p>Type a specific value next to any field. Leave it blank to let the tool pick a random one that satisfies the field&rsquo;s constraints.</p>
+      </div>
+      <div class="feature">
+        <h3>Validation-aware random</h3>
+        <p>Reads Google&rsquo;s embedded validation rules and generates matching values: numeric ranges, valid emails, URLs, text length, regex hints.</p>
+      </div>
+      <div class="feature">
+        <h3>Bulk submit, multi-threaded</h3>
+        <p>Run 1&ndash;10,000 submissions concurrently across up to 32 worker threads. Configurable per-thread delay between requests.</p>
+      </div>
+      <div class="feature">
+        <h3>Live progress &amp; logs</h3>
+        <p>Slim progress bar with OK / FAIL counters. Output mirrored to the terminal. Failed submissions report status code and likely cause.</p>
+      </div>
+      <div class="feature">
+        <h3>Stop mid-run</h3>
+        <p>The Submit button toggles to Stop while running. Cancellation pauses the queue and tears down within one in-flight request.</p>
+      </div>
+      <div class="feature">
+        <h3>Dark &amp; light theme</h3>
+        <p>Strict monochrome palette in both modes. Toggle on the fly &mdash; nothing else changes, no color accents.</p>
+      </div>
+      <div class="feature">
+        <h3>No browser, no Selenium</h3>
+        <p>Pure HTTP POSTs. Harvests the form&rsquo;s anti-bot tokens (<code>fbzx</code>, <code>fvv</code>, &hellip;) automatically so Google accepts the submission.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Quick start</div>
+    <h2>Get it running</h2>
+    <div class="code-block">
+      <div class="code-head">
+        <span class="code-label">1. CLONE</span>
+        <button class="copy-btn" type="button">Copy</button>
+      </div>
+      <pre><code>git clone https://github.com/LegitCoconut/googleform-autofill-and-submit
+cd googleform-autofill-and-submit</code></pre>
+    </div>
+
+    <div class="code-block">
+      <div class="code-head">
+        <span class="code-label">2. INSTALL</span>
+        <button class="copy-btn" type="button">Copy</button>
+      </div>
+      <pre><code>python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt</code></pre>
+    </div>
+
+    <div class="code-block">
+      <div class="code-head">
+        <span class="code-label">3. RUN</span>
+        <button class="copy-btn" type="button">Copy</button>
+      </div>
+      <pre><code>.venv/bin/python gui.py</code></pre>
+    </div>
+    <p class="muted" style="margin-top:14px;">
+      You can still use the original CLI &mdash; <code>python main.py &lt;url&gt;</code> &mdash; but the GUI adds bulk submission,
+      per-field overrides, validation-aware random data, threading, and live progress.
+    </p>
+  </section>
+
+  <section>
+    <div class="eyebrow">How it works</div>
+    <h2>Three steps</h2>
+    <ol>
+      <li>Paste a Google Form URL and press <strong>Inspect</strong>. The tool extracts every field straight from the form&rsquo;s embedded data.</li>
+      <li>Tick the fields you want to submit. Optionally type specific values for fields whose random defaults wouldn&rsquo;t pass validation.</li>
+      <li>Set Count, Threads, and Delay &mdash; then <strong>Submit</strong>. Watch the progress bar and log as it runs.</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow">Use responsibly</div>
+    <h2>Note</h2>
+    <p class="muted">
+      Only use this on forms you own or are explicitly authorized to submit to.
+      Bulk-submitting random data to forms you don&rsquo;t control is spam &mdash; don&rsquo;t do it.
+    </p>
+  </section>
+      <footer>
+        Built with Python, PyQt6, and a regex against Google&rsquo;s form HTML.
+      </footer>
+    </div><!-- /.content-col -->
+  </div><!-- /.layout -->
+</main>
+
+<script>
+(function() {
+  const root = document.documentElement;
+  const btn = document.getElementById('themeToggle');
+  const mql = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function syncLabel() {
+    btn.textContent = root.getAttribute('data-theme') === 'dark' ? 'Light' : 'Dark';
+  }
+  syncLabel();
+
+  btn.addEventListener('click', function() {
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+    syncLabel();
+  });
+
+  // Follow system changes when user hasn't picked
+  mql.addEventListener('change', function(e) {
+    try {
+      if (!localStorage.getItem('theme')) {
+        root.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+        syncLabel();
+      }
+    } catch (err) {}
+  });
+
+  // Copy buttons
+  document.querySelectorAll('.copy-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var block = btn.closest('.code-block');
+      var text = block.querySelector('code').innerText;
+      var done = function(label) {
+        var orig = btn.textContent;
+        btn.textContent = label;
+        btn.classList.add('copied');
+        setTimeout(function() {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          function() { done('Copied'); },
+          function() { done('Error'); }
+        );
+      } else {
+        // Fallback for older browsers / non-secure contexts
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'absolute';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          done('Copied');
+        } catch (e) {
+          done('Error');
+        }
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>
